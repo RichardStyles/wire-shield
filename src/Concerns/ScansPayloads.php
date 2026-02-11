@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RichardStyles\WireShield\Data\Threat;
 use RichardStyles\WireShield\Enums\ThreatSeverity;
+use RichardStyles\WireShield\Enums\ThreatType;
 use RichardStyles\WireShield\Events\LivewireDeserializationAttempt;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -110,7 +111,7 @@ trait ScansPayloads
 
                 if (isset($this->getDangerousClassesMap()[$class])) {
                     $threats[] = new Threat(
-                        type: 'known_gadget_class',
+                        type: ThreatType::KnownGadgetClass,
                         severity: ThreatSeverity::Critical,
                         componentIndex: $componentIndex,
                         path: $path,
@@ -118,7 +119,7 @@ trait ScansPayloads
                     );
                 } else {
                     $threats[] = new Threat(
-                        type: 'unexpected_class_in_update',
+                        type: ThreatType::UnexpectedClassInUpdate,
                         severity: ThreatSeverity::Critical,
                         componentIndex: $componentIndex,
                         path: $path,
@@ -131,7 +132,7 @@ trait ScansPayloads
             if ($this->shouldFlagUnknownSynthesizerKeys()) {
                 if (! isset($this->getKnownKeysMap()[$meta['s']])) {
                     $threats[] = new Threat(
-                        type: 'unknown_synthesizer_key',
+                        type: ThreatType::UnknownSynthesizerKey,
                         severity: ThreatSeverity::High,
                         componentIndex: $componentIndex,
                         path: $path,
@@ -167,7 +168,7 @@ trait ScansPayloads
         foreach ($suspiciousProperties as $pattern) {
             if ($property === $pattern || str_starts_with($property, $pattern)) {
                 $threats[] = new Threat(
-                    type: 'suspicious_property_update',
+                    type: ThreatType::SuspiciousPropertyUpdate,
                     severity: ThreatSeverity::High,
                     componentIndex: $componentIndex,
                     path: $path,
@@ -195,7 +196,7 @@ trait ScansPayloads
 
         if (preg_match($pattern, $value, $matches) === 1) {
             $threats[] = new Threat(
-                type: 'dangerous_callable',
+                type: ThreatType::DangerousCallable,
                 severity: ThreatSeverity::Medium,
                 componentIndex: $componentIndex,
                 path: $path,
@@ -217,38 +218,42 @@ trait ScansPayloads
         array_push($existing, ...$threats);
         $request->attributes->set('wire_shield_threats', $existing);
 
-        $channel = config('wire-shield.log_channel');
-        $logger = $channel ? Log::channel($channel) : Log::getFacadeRoot();
-
-        $hasCritical = false;
-
-        foreach ($threats as $threat) {
-            if ($threat->severity === ThreatSeverity::Critical) {
-                $hasCritical = true;
-
-                break;
-            }
-        }
-
         $threatArrays = array_map(fn (Threat $threat) => [
             ...$threat->toArray(),
             'detail' => Str::limit($threat->detail, 500),
         ], $threats);
 
-        $context = [
-            'ip' => $request->ip(),
-            'user_agent' => Str::limit($request->userAgent() ?? '', 200),
-            'path' => $request->path(),
-            'threat_count' => count($threats),
-            'threats' => $threatArrays,
-        ];
+        // Built-in logging — optional, users can handle via event listeners instead
+        if (config('wire-shield.log_threats', true)) {
+            $channel = config('wire-shield.log_channel');
+            $logger = $channel ? Log::channel($channel) : Log::getFacadeRoot();
 
-        if ($hasCritical) {
-            $logger->critical('Livewire deserialization attack pattern detected', $context);
-        } else {
-            $logger->warning('Suspicious Livewire request detected', $context);
+            $hasCritical = false;
+
+            foreach ($threats as $threat) {
+                if ($threat->severity === ThreatSeverity::Critical) {
+                    $hasCritical = true;
+
+                    break;
+                }
+            }
+
+            $context = [
+                'ip' => $request->ip(),
+                'user_agent' => Str::limit($request->userAgent() ?? '', 200),
+                'path' => $request->path(),
+                'threat_count' => count($threats),
+                'threats' => $threatArrays,
+            ];
+
+            if ($hasCritical) {
+                $logger->critical('Livewire deserialization attack pattern detected', $context);
+            } else {
+                $logger->warning('Suspicious Livewire request detected', $context);
+            }
         }
 
+        // Dispatch event for custom handling
         if (config('wire-shield.dispatch_events', true)) {
             LivewireDeserializationAttempt::dispatch(
                 (string) $request->ip(),

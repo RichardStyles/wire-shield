@@ -30,12 +30,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Log Threats
+    |--------------------------------------------------------------------------
+    |
+    | Enable built-in logging of threats. When disabled, no automatic logging
+    | occurs — listen to the LivewireDeserializationAttempt event instead to
+    | handle logging, alerting, or integration with your monitoring system.
+    |
+    */
+
+    'log_threats' => env('WIRE_SHIELD_LOG_THREATS', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Log Channel
     |--------------------------------------------------------------------------
     |
     | The log channel to write security alerts to. Set to null to use the
     | default channel. Consider a dedicated 'security' channel for easier
-    | filtering and longer retention.
+    | filtering and longer retention. Only used when log_threats is enabled.
     |
     */
 

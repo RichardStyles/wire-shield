@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use RichardStyles\WireShield\Concerns\ScansPayloads;
 use RichardStyles\WireShield\Data\Threat;
 use RichardStyles\WireShield\Enums\ThreatSeverity;
+use RichardStyles\WireShield\Enums\ThreatType;
 use Symfony\Component\HttpFoundation\Response;
 
 class ScanLivewirePayloads
@@ -148,7 +149,7 @@ class ScanLivewirePayloads
 
             if (is_string($method) && isset($dangerousMethods[$method])) {
                 $threats[] = new Threat(
-                    type: 'dangerous_method_call',
+                    type: ThreatType::DangerousMethodCall,
                     severity: ThreatSeverity::High,
                     componentIndex: $index,
                     path: "components.{$index}.calls.{$callIndex}.method",
@@ -172,7 +173,7 @@ class ScanLivewirePayloads
 
         if ($raw !== null && $snapshot === null) {
             $threats[] = new Threat(
-                type: 'malformed_snapshot',
+                type: ThreatType::MalformedSnapshot,
                 severity: ThreatSeverity::High,
                 componentIndex: $index,
                 path: "components.{$index}.snapshot",
@@ -220,7 +221,7 @@ class ScanLivewirePayloads
 
         if (count($children) > $maxChildren) {
             $threats[] = new Threat(
-                type: 'excessive_children_count',
+                type: ThreatType::ExcessiveChildrenCount,
                 severity: ThreatSeverity::Medium,
                 componentIndex: $index,
                 path: "components.{$index}.snapshot.memo.children",
@@ -241,7 +242,7 @@ class ScanLivewirePayloads
 
             if (strlen($idToCheck) > 40) {
                 $threats[] = new Threat(
-                    type: 'suspicious_child_id',
+                    type: ThreatType::SuspiciousChildId,
                     severity: ThreatSeverity::High,
                     componentIndex: $index,
                     path: "components.{$index}.snapshot.memo.children.{$childKey}",
@@ -251,7 +252,7 @@ class ScanLivewirePayloads
 
             if (str_contains($idToCheck, '\\')) {
                 $threats[] = new Threat(
-                    type: 'suspicious_child_id',
+                    type: ThreatType::SuspiciousChildId,
                     severity: ThreatSeverity::Critical,
                     componentIndex: $index,
                     path: "components.{$index}.snapshot.memo.children.{$childKey}",

@@ -86,15 +86,27 @@ test('disabled middleware does nothing', function () {
     Event::assertNotDispatched(LivewireDeserializationAttempt::class);
 });
 
-test('non livewire requests are ignored', function () {
+test('non livewire requests to other routes are ignored', function () {
     Event::fake([LivewireDeserializationAttempt::class]);
 
-    $this->postJson($this->updatePath, livewirePayload(
+    $this->postJson('/not-livewire', livewirePayload(
         snapshot: '{}',
         updates: ['name' => ['payload', ['s' => 'str', 'class' => 'GuzzleHttp\\Psr7\\FnStream']]],
     ));
 
     Event::assertNotDispatched(LivewireDeserializationAttempt::class);
+});
+
+test('detects threats on livewire route without X-Livewire header', function () {
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $this->postJson($this->updatePath, livewirePayload(
+        updates: ['name' => ['payload', ['s' => 'str', 'class' => 'GuzzleHttp\\Psr7\\FnStream']]],
+    ));
+
+    Event::assertDispatched(LivewireDeserializationAttempt::class, function ($event) {
+        return collect($event->threats)->contains('type', 'known_gadget_class');
+    });
 });
 
 test('detects threats in call parameters', function () {

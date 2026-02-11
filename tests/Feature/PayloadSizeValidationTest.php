@@ -46,7 +46,7 @@ test('disabled enforce_payload_size skips check', function () {
 test('non livewire requests skip size check', function () {
     config(['wire-shield.max_payload_bytes' => 10]);
 
-    $response = $this->postJson($this->updatePath, livewirePayload(
+    $response = $this->postJson('/not-livewire', livewirePayload(
         snapshot: fakeSnapshot(['big' => str_repeat('x', 200)]),
     ));
 

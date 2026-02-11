@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace RichardStyles\WireShield\Data;
 
 use RichardStyles\WireShield\Enums\ThreatSeverity;
+use RichardStyles\WireShield\Enums\ThreatType;
 
 final readonly class Threat
 {
     public function __construct(
-        public string $type,
+        public ThreatType $type,
         public ThreatSeverity $severity,
         public int $componentIndex,
         public string $path,
@@ -22,7 +23,7 @@ final readonly class Threat
     public function toArray(): array
     {
         return [
-            'type' => $this->type,
+            'type' => $this->type->value,
             'severity' => $this->severity->value,
             'component_index' => $this->componentIndex,
             'path' => $this->path,

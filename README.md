@@ -123,7 +123,175 @@ Dispatched once per request when any scan detects threats. Contains the consolid
 | `threats` | `array` | Array of threat details (type, severity, path, detail) |
 | `timestamp` | `string` | ISO 8601 timestamp |
 
-Attach listeners for Slack notifications, Sentry alerts, SIEM integration, etc.
+### Custom Logging via Event Listeners
+
+By default, Wire Shield logs threats to your configured log channel. If you prefer full control over logging and alerting, disable built-in logging and listen to the `LivewireDeserializationAttempt` event:
+
+```php
+// config/wire-shield.php
+'log_threats' => false,
+'dispatch_events' => true,
+```
+
+#### Abstract Listener Classes
+
+Wire Shield provides abstract listener classes that handle common patterns:
+
+- **AbstractThreatListener** — Base class with severity filtering, threat analysis, and formatting utilities
+- **AbstractNotificationListener** — Extends `AbstractThreatListener` with rate limiting to prevent notification spam
+
+**Available utility methods:**
+
+```php
+// Severity checks
+$this->hasCriticalThreats($event);
+$this->hasHighThreats($event);
+$this->getHighestSeverity($event); // 'critical', 'high', 'medium', or null
+$this->shouldHandle($event, 'high'); // Only handle high+ threats
+
+// Filtering
+$this->filterBySeverity($event, 'critical');
+$this->filterByType($event, 'known_gadget_class');
+$this->getUniqueTypes($event);
+
+// Formatting
+$this->formatSummary($event);
+$this->buildContext($event);
+```
+
+#### Example Implementations
+
+Copy these complete implementations to your `app/Listeners` directory:
+
+**SecurityLogListener** - Logs to a dedicated security channel:
+
+```php
+namespace App\Listeners;
+
+use Illuminate\Support\Facades\Log;
+use RichardStyles\WireShield\Events\LivewireDeserializationAttempt;
+use RichardStyles\WireShield\Listeners\AbstractThreatListener;
+
+class SecurityLogListener extends AbstractThreatListener
+{
+    public function handle(LivewireDeserializationAttempt $event): void
+    {
+        if (!$this->shouldHandle($event, 'high')) {
+            return;
+        }
+
+        $logger = Log::channel('security');
+
+        if ($this->hasCriticalThreats($event)) {
+            $logger->critical('Livewire threat detected', $this->buildContext($event));
+        } else {
+            $logger->warning('Livewire threat detected', $this->buildContext($event));
+        }
+    }
+}
+```
+
+**SlackNotificationListener** - Sends formatted Slack messages:
+
+```php
+namespace App\Listeners;
+
+use Illuminate\Support\Facades\Http;
+use RichardStyles\WireShield\Events\LivewireDeserializationAttempt;
+use RichardStyles\WireShield\Listeners\AbstractNotificationListener;
+
+class SlackNotificationListener extends AbstractNotificationListener
+{
+    protected function getMinimumSeverity(): string
+    {
+        return 'critical';
+    }
+
+    protected function shouldRateLimit(): bool
+    {
+        return true;
+    }
+
+    protected function sendNotification(LivewireDeserializationAttempt $event): void
+    {
+        $webhookUrl = config('services.slack.webhook_url');
+
+        Http::post($webhookUrl, [
+            'attachments' => [
+                [
+                    'color' => $this->getHighestSeverity($event) === 'critical' ? '#ff0000' : '#ff9900',
+                    'title' => $this->formatTitle($event),
+                    'text' => $this->formatBody($event),
+                    'footer' => 'Wire Shield | ' . $event->timestamp,
+                ],
+            ],
+        ]);
+    }
+}
+```
+
+**SiemListener** - Sends to SIEM/monitoring platform:
+
+```php
+namespace App\Listeners;
+
+use Illuminate\Support\Facades\Http;
+use RichardStyles\WireShield\Events\LivewireDeserializationAttempt;
+use RichardStyles\WireShield\Listeners\AbstractThreatListener;
+
+class SiemListener extends AbstractThreatListener
+{
+    public function handle(LivewireDeserializationAttempt $event): void
+    {
+        // Send all threats to SIEM
+        Http::timeout(5)->retry(3)->post(config('services.siem.endpoint'), [
+            'event_type' => 'security.livewire.threat',
+            'severity' => $this->getHighestSeverity($event),
+            'source_ip' => $event->ipAddress,
+            'user_agent' => $event->userAgent,
+            'request_path' => $event->requestPath,
+            'timestamp' => $event->timestamp,
+            'threat_count' => count($event->threats),
+            'threat_types' => $this->getUniqueTypes($event),
+            'threats' => $event->threats,
+            'has_critical' => $this->hasCriticalThreats($event),
+            'app' => config('app.name'),
+            'environment' => config('app.env'),
+        ]);
+    }
+}
+```
+
+#### Register Your Listeners
+
+**Laravel 12:** Ensure event discovery is enabled in `bootstrap/app.php`:
+
+```php
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(/* ... */)
+    ->withMiddleware(/* ... */)
+    ->withEvents(discover: [
+        __DIR__.'/../app/Listeners',
+    ])
+    ->create();
+```
+
+Listeners in `app/Listeners` will be automatically discovered and registered.
+
+**Laravel 11:** Add them to `app/Providers/EventServiceProvider.php`:
+
+```php
+use RichardStyles\WireShield\Events\LivewireDeserializationAttempt;
+use App\Listeners\SecurityLogListener;
+use App\Listeners\SlackNotificationListener;
+
+protected $listen = [
+    LivewireDeserializationAttempt::class => [
+        SecurityLogListener::class,
+        SlackNotificationListener::class,
+    ],
+];
+```
 
 ### RepeatOffenderDetected
 
@@ -146,6 +314,7 @@ All features are toggleable. Key config options:
 return [
     'enabled' => true,                          // Master switch
     'block_suspicious_requests' => false,        // 403 on detection
+    'log_threats' => true,                       // Built-in logging (disable to use events only)
     'log_channel' => null,                       // Dedicated log channel
     'scan_snapshots' => true,                    // Snapshot data scanning
     'scan_call_methods' => true,                 // Call method validation
@@ -190,10 +359,11 @@ Internally, threats are represented as typed `Threat` data objects rather than r
 ```php
 use RichardStyles\WireShield\Data\Threat;
 use RichardStyles\WireShield\Enums\ThreatSeverity;
+use RichardStyles\WireShield\Enums\ThreatType;
 
 // Created by scanners
 new Threat(
-    type: 'known_gadget_class',
+    type: ThreatType::KnownGadgetClass,
     severity: ThreatSeverity::Critical,
     componentIndex: 0,
     path: 'components.0.updates.data.name',
@@ -201,7 +371,7 @@ new Threat(
 );
 ```
 
-`ThreatSeverity` is a backed string enum with three cases: `Critical`, `High`, and `Medium`. The `Threat` DTO is a `final readonly` class with a `toArray()` method used at the serialisation boundary — events and log context always receive plain arrays for external consumers.
+Both `ThreatType` and `ThreatSeverity` are backed string enums. `ThreatType` has 9 cases covering all detection patterns, while `ThreatSeverity` has 3 cases: `Critical`, `High`, and `Medium`. The `Threat` DTO is a `final readonly` class with a `toArray()` method used at the serialisation boundary — events and log context always receive plain arrays for external consumers.
 
 ### Middleware Pipeline
 
