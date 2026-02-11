@@ -29,7 +29,19 @@ trait ScansPayloads
 
     protected function isLivewireRequest(Request $request): bool
     {
-        return $request->isMethod('POST') && $request->hasHeader('X-Livewire');
+        if (! $request->isMethod('POST')) {
+            return false;
+        }
+
+        if ($request->hasHeader('X-Livewire')) {
+            return true;
+        }
+
+        // Also match by route name — an attacker can omit the X-Livewire
+        // header and Livewire will still process the update request.
+        $route = $request->route();
+
+        return $route && $route->named('*livewire.update');
     }
 
     /**
