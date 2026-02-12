@@ -12,6 +12,8 @@ enum ThreatType: string
     case SuspiciousPropertyUpdate = 'suspicious_property_update';
     case DangerousCallable = 'dangerous_callable';
     case DangerousMethodCall = 'dangerous_method_call';
+    case SuspiciousMagicMethodPattern = 'suspicious_magic_method_pattern';
+    case PathTraversalAttempt = 'path_traversal_attempt';
     case MalformedSnapshot = 'malformed_snapshot';
     case ExcessiveChildrenCount = 'excessive_children_count';
     case SuspiciousChildId = 'suspicious_child_id';

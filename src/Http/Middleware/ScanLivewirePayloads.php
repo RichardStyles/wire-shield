@@ -23,6 +23,8 @@ class ScanLivewirePayloads
         }
 
         $scanCallMethods = (bool) config('wire-shield.scan_call_methods', true);
+        $scanMagicMethodPatterns = (bool) config('wire-shield.scan_magic_method_patterns', true);
+        $scanPathTraversal = (bool) config('wire-shield.scan_path_traversal', true);
         $scanSnapshots = (bool) config('wire-shield.scan_snapshots', true);
         $scanMemoChildren = (bool) config('wire-shield.scan_memo_children', false);
         $needsSnapshot = $scanSnapshots || $scanMemoChildren;
@@ -38,12 +40,12 @@ class ScanLivewirePayloads
             }
 
             // Core deserialization detection — scan updates and call parameters
-            array_push($threats, ...$this->scanUpdates($component, $index));
-            array_push($threats, ...$this->scanCallParams($component, $index));
+            array_push($threats, ...$this->scanUpdates($component, $index, $scanPathTraversal));
+            array_push($threats, ...$this->scanCallParams($component, $index, $scanPathTraversal));
 
             // Call method name validation
-            if ($scanCallMethods) {
-                array_push($threats, ...$this->scanCallMethods($component, $index, $dangerousMethods));
+            if ($scanCallMethods || $scanMagicMethodPatterns) {
+                array_push($threats, ...$this->scanCallMethods($component, $index, $dangerousMethods, $scanMagicMethodPatterns));
             }
 
             // Snapshot-based scanning — decode once for both scanners
@@ -51,7 +53,7 @@ class ScanLivewirePayloads
                 ['snapshot' => $snapshot, 'raw' => $raw] = $this->decodeSnapshot($component);
 
                 if ($scanSnapshots) {
-                    array_push($threats, ...$this->scanSnapshotData($snapshot, $raw, $index));
+                    array_push($threats, ...$this->scanSnapshotData($snapshot, $raw, $index, $scanPathTraversal));
                 }
 
                 if ($scanMemoChildren) {
@@ -69,7 +71,7 @@ class ScanLivewirePayloads
      * @param  array<string, mixed>  $component
      * @return list<Threat>
      */
-    private function scanUpdates(array $component, int $index): array
+    private function scanUpdates(array $component, int $index, bool $scanPathTraversal): array
     {
         $threats = [];
         $updates = $component['updates'] ?? [];
@@ -82,7 +84,7 @@ class ScanLivewirePayloads
             $path = "components.{$index}.updates.{$property}";
 
             array_push($threats, ...$this->checkSuspiciousPropertyName((string) $property, $path, $index));
-            array_push($threats, ...$this->scanValue($value, $path, $index));
+            array_push($threats, ...$this->scanValue($value, $path, $index, 0, $scanPathTraversal));
         }
 
         return $threats;
@@ -94,7 +96,7 @@ class ScanLivewirePayloads
      * @param  array<string, mixed>  $component
      * @return list<Threat>
      */
-    private function scanCallParams(array $component, int $index): array
+    private function scanCallParams(array $component, int $index, bool $scanPathTraversal): array
     {
         $threats = [];
         $calls = $component['calls'] ?? [];
@@ -116,6 +118,8 @@ class ScanLivewirePayloads
                         $param,
                         "components.{$index}.calls.{$callIndex}.params.{$paramIndex}",
                         $index,
+                        0,
+                        $scanPathTraversal,
                     ));
                 }
             }
@@ -125,13 +129,13 @@ class ScanLivewirePayloads
     }
 
     /**
-     * Validate call method names against the dangerous methods list.
+     * Validate call method names against the dangerous methods list and magic method patterns.
      *
      * @param  array<string, mixed>  $component
      * @param  array<string, int>  $dangerousMethods
      * @return list<Threat>
      */
-    private function scanCallMethods(array $component, int $index, array $dangerousMethods): array
+    private function scanCallMethods(array $component, int $index, array $dangerousMethods, bool $scanPatterns): array
     {
         $threats = [];
         $calls = $component['calls'] ?? [];
@@ -147,13 +151,31 @@ class ScanLivewirePayloads
 
             $method = $call['method'] ?? null;
 
-            if (is_string($method) && isset($dangerousMethods[$method])) {
+            if (! is_string($method)) {
+                continue;
+            }
+
+            // Check exact match against known dangerous methods
+            if (isset($dangerousMethods[$method])) {
                 $threats[] = new Threat(
                     type: ThreatType::DangerousMethodCall,
                     severity: ThreatSeverity::High,
                     componentIndex: $index,
                     path: "components.{$index}.calls.{$callIndex}.method",
                     detail: "Dangerous method call: {$method}",
+                );
+
+                continue;
+            }
+
+            // Check for suspicious magic method pattern (__ prefix but not in known list)
+            if ($scanPatterns && str_starts_with($method, '__')) {
+                $threats[] = new Threat(
+                    type: ThreatType::SuspiciousMagicMethodPattern,
+                    severity: ThreatSeverity::High,
+                    componentIndex: $index,
+                    path: "components.{$index}.calls.{$callIndex}.method",
+                    detail: "Suspicious magic method pattern: {$method}",
                 );
             }
         }
@@ -167,7 +189,7 @@ class ScanLivewirePayloads
      * @param  array<string, mixed>|null  $snapshot
      * @return list<Threat>
      */
-    private function scanSnapshotData(?array $snapshot, ?string $raw, int $index): array
+    private function scanSnapshotData(?array $snapshot, ?string $raw, int $index, bool $scanPathTraversal): array
     {
         $threats = [];
 
@@ -191,7 +213,7 @@ class ScanLivewirePayloads
 
         if (is_array($data)) {
             foreach ($data as $property => $value) {
-                array_push($threats, ...$this->scanValue($value, "components.{$index}.snapshot.data.{$property}", $index));
+                array_push($threats, ...$this->scanValue($value, "components.{$index}.snapshot.data.{$property}", $index, 0, $scanPathTraversal));
             }
         }
 

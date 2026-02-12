@@ -63,6 +63,28 @@ Validates method names in `components[].calls[].method` against a configurable `
 
 These methods should never be invoked directly via the wire protocol. Their presence in a call indicates probing or exploitation attempts.
 
+### Magic Method Pattern Detection
+
+**Config:** `scan_magic_method_patterns` (default: `true`)
+
+Flags ANY method call starting with double underscore (`__`) that isn't in the known `dangerous_methods` list. Catches reconnaissance probes like `__foobar` that attempt to:
+
+- Trigger custom `__call()` magic method handlers
+- Discover undocumented internal methods
+- Bypass exact-match validation
+
+### Path Traversal Detection
+
+**Config:** `scan_path_traversal` (default: `true`)
+
+Scans all string values in updates and call parameters for directory traversal patterns:
+
+- **Basic patterns** — `../` and `..\`
+- **URL encoded** — `%2e%2e%2f`, `%2e%2e%5c`
+- **Double encoded** — `%252e%252e%252f`, `%252e%252e%255c`
+
+Detects attempts to escape the current directory to access unauthorized files or resources.
+
 ### Memo Children Monitoring
 
 **Config:** `scan_memo_children` (default: `false`)
@@ -318,6 +340,8 @@ return [
     'log_channel' => null,                       // Dedicated log channel
     'scan_snapshots' => true,                    // Snapshot data scanning
     'scan_call_methods' => true,                 // Call method validation
+    'scan_magic_method_patterns' => true,        // Magic method pattern detection
+    'scan_path_traversal' => true,               // Path traversal detection
     'scan_memo_children' => false,               // Memo children checking
     'throttle_offenders' => false,               // IP-based throttling
     'enforce_payload_size' => false,             // Body size enforcement
@@ -349,6 +373,8 @@ return [
 | `suspicious_property_update` | high | Deserialization |
 | `malformed_snapshot` | high | Snapshot |
 | `dangerous_method_call` | high | Call method |
+| `suspicious_magic_method_pattern` | high | Call method |
+| `path_traversal_attempt` | high | Deserialization / Snapshot |
 | `suspicious_child_id` | high/critical | Memo children |
 | `excessive_children_count` | medium | Memo children |
 

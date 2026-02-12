@@ -95,7 +95,7 @@ trait ScansPayloads
     /**
      * @return list<Threat>
      */
-    protected function scanValue(mixed $value, string $path, int $componentIndex, int $depth = 0): array
+    protected function scanValue(mixed $value, string $path, int $componentIndex, int $depth = 0, bool $scanPathTraversal = false): array
     {
         if ($depth > $this->getMaxScanDepth()) {
             return [];
@@ -106,6 +106,10 @@ trait ScansPayloads
         if (! is_array($value)) {
             if (is_string($value)) {
                 array_push($threats, ...$this->checkDangerousCallables($value, $path, $componentIndex));
+
+                if ($scanPathTraversal) {
+                    array_push($threats, ...$this->checkPathTraversal($value, $path, $componentIndex));
+                }
             }
 
             return $threats;
@@ -154,14 +158,14 @@ trait ScansPayloads
             }
 
             // Recurse into the data portion (first element of the tuple)
-            array_push($threats, ...$this->scanValue($value[0], $path.'.0', $componentIndex, $depth + 1));
+            array_push($threats, ...$this->scanValue($value[0], $path.'.0', $componentIndex, $depth + 1, $scanPathTraversal));
 
             return $threats;
         }
 
         // Regular array — recurse into all elements
         foreach ($value as $key => $child) {
-            array_push($threats, ...$this->scanValue($child, $path.'.'.$key, $componentIndex, $depth + 1));
+            array_push($threats, ...$this->scanValue($child, $path.'.'.$key, $componentIndex, $depth + 1, $scanPathTraversal));
         }
 
         return $threats;
@@ -213,6 +217,32 @@ trait ScansPayloads
                 componentIndex: $componentIndex,
                 path: $path,
                 detail: "Dangerous callable reference: {$matches[0]}",
+            );
+        }
+
+        return $threats;
+    }
+
+    /**
+     * @return list<Threat>
+     */
+    protected function checkPathTraversal(string $value, string $path, int $componentIndex): array
+    {
+        $threats = [];
+
+        // Check for path traversal patterns:
+        // - Basic: ../ and ..\
+        // - URL encoded: %2e%2e%2f, %2e%2e%5c, %2e%2e/ (mixed)
+        // - Double encoded: %252e%252e%252f, %252e%252e%255c
+        $pattern = '/(?:\.\.[\\/\\\\]|%2e%2e[%2f%5c]|%252e%252e%25(?:2f|5c))/i';
+
+        if (preg_match($pattern, $value, $matches) === 1) {
+            $threats[] = new Threat(
+                type: ThreatType::PathTraversalAttempt,
+                severity: ThreatSeverity::High,
+                componentIndex: $componentIndex,
+                path: $path,
+                detail: "Path traversal pattern detected: {$matches[0]}",
             );
         }
 

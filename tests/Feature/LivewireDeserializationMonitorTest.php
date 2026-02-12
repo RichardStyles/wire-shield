@@ -224,3 +224,111 @@ test('event carries correct metadata', function () {
             && count($event->threats) > 0;
     });
 });
+
+test('detects path traversal in update values', function (string $payload) {
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $this->postJson($this->updatePath, livewirePayload(
+        updates: ['search' => $payload],
+    ), ['X-Livewire' => '1']);
+
+    Event::assertDispatched(LivewireDeserializationAttempt::class, function ($event) {
+        return collect($event->threats)->contains('type', 'path_traversal_attempt');
+    });
+})->with([
+    '../../../etc/passwd',
+    '..\\..\\..\\windows\\system32',
+    'some/path/../../../secret',
+    '%2e%2e%2f%2e%2e%2f%2e%2e%2f',
+    '%2e%2e%5c%2e%2e%5c',
+    '%252e%252e%252f',
+]);
+
+test('detects path traversal in call parameters', function () {
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $this->postJson($this->updatePath, livewirePayload(
+        calls: [['method' => 'search', 'params' => ['../../../']]],
+    ), ['X-Livewire' => '1']);
+
+    Event::assertDispatched(LivewireDeserializationAttempt::class, function ($event) {
+        return collect($event->threats)->contains('type', 'path_traversal_attempt');
+    });
+});
+
+test('detects path traversal in nested structures', function () {
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $this->postJson($this->updatePath, livewirePayload(
+        updates: ['filters' => ['path' => '../../../secret']],
+    ), ['X-Livewire' => '1']);
+
+    Event::assertDispatched(LivewireDeserializationAttempt::class, function ($event) {
+        return collect($event->threats)->contains('type', 'path_traversal_attempt');
+    });
+});
+
+test('disabled scan_path_traversal config skips path traversal scanning', function () {
+    config(['wire-shield.scan_path_traversal' => false]);
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $this->postJson($this->updatePath, livewirePayload(
+        updates: ['search' => '../../../etc/passwd'],
+    ), ['X-Livewire' => '1']);
+
+    Event::assertNotDispatched(LivewireDeserializationAttempt::class);
+});
+
+test('path traversal with blocking mode returns 403', function () {
+    config(['wire-shield.block_suspicious_requests' => true]);
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $response = $this->postJson($this->updatePath, livewirePayload(
+        calls: [['method' => 'inline-search', 'params' => ['../../../']]],
+    ), ['X-Livewire' => '1']);
+
+    $response->assertStatus(403);
+});
+
+test('normal file paths are not flagged as traversal', function () {
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    $this->postJson($this->updatePath, livewirePayload(
+        updates: [
+            'path' => '/var/www/html/public',
+            'file' => 'document.pdf',
+            'url' => 'https://example.com/path/to/file',
+        ],
+    ), ['X-Livewire' => '1']);
+
+    Event::assertNotDispatched(LivewireDeserializationAttempt::class);
+});
+
+test('detects real world attack with magic method and path traversal', function () {
+    Event::fake([LivewireDeserializationAttempt::class]);
+
+    // Real attack payload observed in the wild
+    $this->postJson($this->updatePath, livewirePayload(
+        calls: [
+            [
+                'method' => '__foobar',
+                'params' => [
+                    'inline-search',
+                    '{"search":"../../../"}',
+                ],
+                'path' => '',
+            ],
+        ],
+        snapshot: '{"data":{"inlineResults":true},"memo":{"id":"test","name":"search-bar"},"checksum":"abc123"}',
+        updates: [],
+    ), ['X-Livewire' => '1']);
+
+    Event::assertDispatched(LivewireDeserializationAttempt::class, function ($event) {
+        $threats = collect($event->threats);
+
+        // Should detect both the magic method pattern AND path traversal
+        return $threats->contains('type', 'suspicious_magic_method_pattern')
+            && $threats->contains('type', 'path_traversal_attempt')
+            && $threats->count() >= 2;
+    });
+});

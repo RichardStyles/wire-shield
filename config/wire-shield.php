@@ -227,6 +227,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Scan Magic Method Patterns
+    |--------------------------------------------------------------------------
+    |
+    | Flag ANY method call starting with double underscore (__) even if not
+    | in the exact dangerous_methods list. This catches probing attempts like
+    | __foobar that may trigger __call() handlers or indicate reconnaissance.
+    |
+    */
+
+    'scan_magic_method_patterns' => env('WIRE_SHIELD_SCAN_MAGIC_PATTERNS', true),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Scan Path Traversal
+    |--------------------------------------------------------------------------
+    |
+    | Detect directory traversal attempts in parameter values, including
+    | encoded variants (../, ..\, %2e%2e%2f, %252e%252e%252f, etc.).
+    |
+    */
+
+    'scan_path_traversal' => env('WIRE_SHIELD_SCAN_PATH_TRAVERSAL', true),
+
+    /*
+    |--------------------------------------------------------------------------
     | Repeat Offender Tracking
     |--------------------------------------------------------------------------
     |
